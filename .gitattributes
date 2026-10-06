@@ -1,0 +1,2 @@
+GBK/*.lua -text linguist-language=Lua
+UTF-8/*.lua -text linguist-language=Lua
