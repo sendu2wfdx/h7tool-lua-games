@@ -198,11 +198,36 @@ local nextPiece = 1
 local score, lines, level = 0, 0, 1
 local dropCounter, dropEvery = 0, 26
 local gameOver = false
+local paused = false
+local levelFlash = 0
 local seed = 12345
+local bag, bagPos = {}, 1
+local reseedCount = 0
 
 local function rnd()
     seed = (seed * 1103515245 + 12345) % 2147483648
     return math.floor(seed / 65536)
+end
+
+local function reseed()
+    reseedCount = reseedCount + 1
+    local wall = os.time() or 0
+    seed = (wall * 1009 + get_runtime() * 9176 + reseedCount * 7919) % 2147483647
+    if seed <= 0 then seed = 12345 + reseedCount end
+end
+
+local function randomPiece()
+    if bagPos > #bag then
+        bag = { 1, 2, 3, 4, 5, 6, 7 }
+        for i = #bag, 2, -1 do
+            local j = (rnd() % i) + 1
+            bag[i], bag[j] = bag[j], bag[i]
+        end
+        bagPos = 1
+    end
+    local p = bag[bagPos]
+    bagPos = bagPos + 1
+    return p
 end
 
 local function newPiece()
@@ -210,7 +235,7 @@ local function newPiece()
     curM = PIECES[cur].m
     curX, curY = 4, 1
     curColor = (cur - 1) % #COLORS + 1
-    nextPiece = spawnIndex(rnd())
+    nextPiece = randomPiece()
     if not fits(board, curM, curX, curY) then gameOver = true end
 end
 
@@ -274,8 +299,10 @@ local function draw()
     lcd_disp_str(sx, BOARD_Y + 96, tostring(score), 16, C.white, C.gray, 70, 0)
     lcd_disp_str(sx, BOARD_Y + 130, "行数", 12, C.pale, C.gray, 70, 0)
     lcd_disp_str(sx, BOARD_Y + 146, tostring(lines), 16, C.white, C.gray, 70, 0)
-    lcd_disp_str(sx, BOARD_Y + 180, "等级", 12, C.pale, C.gray, 70, 0)
-    lcd_disp_str(sx, BOARD_Y + 196, tostring(level), 16, C.white, C.gray, 70, 0)
+    local levelBlink = levelFlash > 0 and (math.floor(levelFlash / 3) % 2 == 0)
+    local levelColor = levelBlink and C.yellow or (levelFlash > 0 and C.cyan or C.pale)
+    lcd_disp_str(sx, BOARD_Y + 180, levelFlash > 0 and "升级" or "等级", 12, levelColor, C.gray, 70, 0)
+    lcd_disp_str(sx, BOARD_Y + 196, tostring(level), 16, levelFlash > 0 and levelColor or C.white, C.gray, 70, 0)
 
     if gameOver then
         -- 深蓝面板 + 黄色上下描边，文字居中，比原来的红色横条干净
@@ -287,10 +314,17 @@ local function draw()
         lcd_disp_str(16, 172, "行数 " .. lines, 12, C.light, C.navy, 208, 1)
         -- 最后一行与下边框之间留一行空白
         lcd_disp_str(16, 192, "OK 重来      长按C退出", 12, C.pale, C.navy, 208, 1)
+    elseif paused then
+        lcd_fill_rect(16, 96, 124, 208, C.navy)
+        lcd_fill_rect(16, 96, 3, 208, C.yellow)
+        lcd_fill_rect(16, 217, 3, 208, C.yellow)
+        lcd_disp_str(16, 112, "已暂停", 24, C.yellow, C.navy, 208, 1)
+        lcd_disp_str(16, 151, "得分 " .. score, 16, C.white, C.navy, 208, 1)
+        lcd_disp_str(16, 192, "电源继续      长按C退出", 12, C.pale, C.navy, 208, 1)
     end
 
     lcd_fill_rect(3, 288, 32, 132, C.navy)          -- 与棋盘左右对齐(x=3,w=132)，并让开棋盘框
-    lcd_disp_str(3, 297, "长按C退出", 12, C.pale, C.navy, 132, 1)
+    lcd_disp_str(3, 297, "电源暂停 / 长C退出", 12, C.pale, C.navy, 132, 1)
 
     -- 四个按键的图形：按工具实际布局 2x2（左上 上、右上 OK、左下 下、右下 C）
     do
@@ -336,8 +370,18 @@ end
 -- 必须在 tick() 之前声明，否则 tick 读到的是 nil 全局变量
 local softDrop = false
 
+local function awardLines(n)
+    if n <= 0 then return end
+    local oldLevel = level
+    lines = lines + n
+    score = score + n * n * 10
+    level = 1 + math.floor(lines / 5)
+    dropEvery = math.max(6, 26 - (level - 1) * 3)
+    if level > oldLevel then levelFlash = 18 end
+end
+
 local function tick()
-    if gameOver then return end
+    if gameOver or paused then return end
     dropCounter = dropCounter + 1
     local every = dropEvery
     if dropCounter >= every then
@@ -347,23 +391,18 @@ local function tick()
         else
             merge(board, curM, curX, curY)
             local n = clearLines(board)
-            if n > 0 then
-                lines = lines + n
-                score = score + n * n * 10
-                level = 1 + math.floor(lines / 5)
-                dropEvery = math.max(6, 26 - (level - 1) * 3)
-            end
+            awardLines(n)
             newPiece()
         end
     end
 end
 
 local function move(dx)
-    if not gameOver and fits(board, curM, curX + dx, curY) then curX = curX + dx end
+    if not gameOver and not paused and fits(board, curM, curX + dx, curY) then curX = curX + dx end
 end
 
 local function doRotate()
-    if gameOver then return end
+    if gameOver or paused then return end
     local r = rotate(curM)
     if fits(board, r, curX, curY) then curM = r
     elseif fits(board, r, curX - 1, curY) then curM = r curX = curX - 1
@@ -371,16 +410,11 @@ local function doRotate()
 end
 
 local function hardDrop()
-    if gameOver then return end
+    if gameOver or paused then return end
     while fits(board, curM, curX, curY + 1) do curY = curY + 1 end
     merge(board, curM, curX, curY)
     local n = clearLines(board)
-    if n > 0 then
-        lines = lines + n
-        score = score + n * n * 10
-        level = 1 + math.floor(lines / 5)
-        dropEvery = math.max(6, 26 - (level - 1) * 3)
-    end
+    awardLines(n)
     newPiece()
     dropCounter = 0
 end
@@ -391,8 +425,11 @@ local function reset()
     dropEvery = 26
     dropCounter = 0
     gameOver = false
-    seed = 12345
-    nextPiece = spawnIndex(rnd())
+    paused = false
+    levelFlash = 0
+    reseed()
+    bag, bagPos = {}, 1
+    nextPiece = randomPiece()
     newPiece()
 end
 
@@ -410,6 +447,7 @@ local RIGHT_HOLD_ON = { [17] = true }    -- OK 长按：开始连续右移（OK 
 local RIGHT_HOLD_OFF = { [18] = true }   -- OK 长按弹起：停止
 local DOWN_ONCE = { [9] = true }         -- 下 单击：秒落（直接到底）
 local ROTATE_KEYS = { [101] = true }     -- C 单击：旋转
+local POWER_TOGGLE = { [30] = true, [32] = true }
 -- 下的长按(10)/连发(12)/长按弹起(11) 一律不绑定；长按 C(24) 由固件中止
 local holdLeft, holdRight = false, false
 local holdTicks = 0
@@ -424,9 +462,14 @@ local function main()
     while true do
         local k = get_key()
         while k ~= 0 do
-            if gameOver then
+            if POWER_TOGGLE[k] and not gameOver then
+                paused = not paused
+                holdLeft, holdRight = false, false
+            elseif gameOver then
                 holdLeft, holdRight = false, false
                 if ROTATE_KEYS[k] or RIGHT_ONCE[k] or DOWN_ONCE[k] or LEFT_ONCE[k] then reset() end
+            elseif paused then
+                holdLeft, holdRight = false, false
             elseif LEFT_ONCE[k] then
                 move(-1)
             elseif LEFT_HOLD_ON[k] then
@@ -459,6 +502,7 @@ local function main()
         tick()
         draw()
         lcd_refresh()
+        if levelFlash > 0 then levelFlash = levelFlash - 1 end
         delayms(5)
     end
 end

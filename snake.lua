@@ -1,7 +1,8 @@
 --GUIMODE=1
 -- 贪吃蛇 for H7-TOOL（240x320）
 --   上 = 左转 90°      OK = 右转 90°     ← 只需两个方向键，永远不可能反向
---   下 = 按住加速（松开恢复）            C 单击 = 暂停/继续
+--   下 = 切换加速                        C 单击 = 切换穿墙
+--   电源键 = 暂停/继续
 --   长按 C = 退出（固件行为，本程序不处理）
 -- 键码为实测值（APP V2.33）：
 --   上 1按下 2单击 3长按 5连发 4长按弹起
@@ -169,11 +170,12 @@ local function draw()
         lcd_disp_str(4, 266, "得分 " .. state.score, 12, C.white, C.gray, 100, 0)
         lcd_disp_str(108, 266, "长度 " .. #state.body, 12, C.pale, C.gray, 60, 0)
         local tag = ""
-        if state.boost then tag = "加速中" elseif state.paused then tag = "暂停" end
+        if state.paused then tag = "暂停" elseif state.boost and WRAP then tag = "速+穿" elseif state.boost then tag = "加速" elseif WRAP then tag = "穿墙" end
         lcd_disp_str(172, 266, tag, 12, C.yellow, C.gray, 66, 2)
 
-        lcd_fill_rect(3, 288, 32, 234, C.navy)
-        lcd_disp_str(3, 297, "上=左转  OK=右转  下=加速  C=暂停", 12, C.pale, C.navy, 234, 1)
+        lcd_fill_rect(3, 286, 34, 234, C.navy)
+        lcd_disp_str(3, 289, "上=左转 OK=右转 下=切换加速", 12, C.pale, C.navy, 234, 1)
+        lcd_disp_str(3, 305, "电源=暂停  C=穿墙:" .. (WRAP and "开" or "关"), 12, C.pale, C.navy, 234, 1)
 
     if state.win then
         lcd_fill_rect(16, 108, 100, 208, C.navy)
@@ -191,9 +193,13 @@ local function draw()
         lcd_disp_str(16, 180, "长度 " .. #state.body, 12, C.light, C.navy, 208, 1)
         lcd_disp_str(16, 198, "按上或OK再来一局", 12, C.pale, C.navy, 208, 1)
     elseif state.paused then
-        lcd_fill_rect(60, 130, 48, 120, C.navy)
-        lcd_disp_str(60, 142, "暂停", 24, C.yellow, C.navy, 120, 1)
-        lcd_disp_str(60, 176, "按 C 继续", 12, C.pale, C.navy, 120, 1)
+        lcd_fill_rect(16, 108, 112, 208, C.navy)
+        lcd_fill_rect(16, 108, 3, 208, C.yellow)
+        lcd_fill_rect(16, 217, 3, 208, C.yellow)
+        lcd_disp_str(16, 122, "已暂停", 24, C.yellow, C.navy, 208, 1)
+        lcd_disp_str(16, 158, "得分 " .. state.score, 16, C.white, C.navy, 208, 1)
+        lcd_disp_str(16, 180, "穿墙 " .. (WRAP and "开启" or "关闭"), 12, C.light, C.navy, 208, 1)
+        lcd_disp_str(16, 198, "电源继续      长按C退出", 12, C.pale, C.navy, 208, 1)
     end
 end
 
@@ -205,9 +211,9 @@ local KEY = {
     left_turn = 2,      -- 上 单击
     right_turn = 100,   -- OK 单击
     boost_down = 9,     -- 下 单击
-    boost_long = 10,    -- 下 长按
-    boost_up = 11,      -- 下 长按弹起（松开）
-    pause = 101,        -- C 单击
+    wrap = 101,         -- C 单击
+    pause_short = 30,   -- 电源短按弹起
+    pause_long_up = 32, -- 电源长按弹起
 }
 
 local function handleKey(k)
@@ -215,18 +221,18 @@ local function handleKey(k)
         turn(state, -1)
     elseif k == KEY.right_turn then
         turn(state, 1)
-    elseif k == KEY.boost_down or k == KEY.boost_long then
-        state.boost = true
-    elseif k == KEY.boost_up then
-        state.boost = false
-    elseif k == KEY.pause then
+    elseif k == KEY.boost_down then
+        state.boost = not state.boost
+    elseif k == KEY.wrap then
+        WRAP = not WRAP
+    elseif k == KEY.pause_short or k == KEY.pause_long_up then
         state.paused = not state.paused
     end
 end
 
 local function isGameKey(k)
     return k == KEY.left_turn or k == KEY.right_turn or k == KEY.boost_down
-        or k == KEY.boost_long or k == KEY.boost_up or k == KEY.pause
+        or k == KEY.wrap or k == KEY.pause_short or k == KEY.pause_long_up
 end
 
 local function main()
